@@ -8,7 +8,7 @@ const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const { z } = require("zod");
 
-const required = ["DATABASE_URL", "SESSION_SECRET", "ADMIN_EMAIL", "ADMIN_PASSWORD_HASH", "SITE_ORIGIN"];
+const required = ["DATABASE_URL", "SESSION_SECRET", "ADMIN_EMAIL", "ADMIN_PASSWORD", "SITE_ORIGIN"];
 for (const key of required) if (!process.env[key]) console.error("Missing required environment variable:", key);
 if (required.some(k => !process.env[k])) process.exit(1);
 
@@ -69,7 +69,7 @@ app.post("/api/employer-inquiries", asyncRoute(async (req,res) => {
 app.post("/api/admin/login", asyncRoute(async (req,res) => {
   const email = clean(req.body.email).toLowerCase();
   const password = typeof req.body.password === "string" ? req.body.password : "";
-  const valid = email === process.env.ADMIN_EMAIL.toLowerCase() && await bcrypt.compare(password, process.env.ADMIN_PASSWORD_HASH);
+  const valid = email === process.env.ADMIN_EMAIL.toLowerCase() && await bcrypt.compare(password, process.env.ADMIN_PASSWORD_HASH || await bcrypt.hash(process.env.ADMIN_PASSWORD, 12));
   if (!valid) return res.status(401).json({error:"Email or password is incorrect."});
   req.session.regenerate(err => {
     if (err) return res.status(500).json({error:"Unable to start secure session."});
