@@ -54,7 +54,7 @@ function makeAdminToken(email) {
   return payload + "." + signature;
 }
 function requireAdmin(req,res,next) {
-  const token = (req.get("authorization") || "").replace(/^Bearer\\s+/i, "");
+  const token = (req.get("authorization") || "").replace(/^Bearer\s+/i, "");
   const parts = token.split(".");
   if (parts.length !== 2) return res.status(401).json({error:"Sign in required"});
   const expected = crypto.createHmac("sha256", process.env.SESSION_SECRET).update(parts[0]).digest();
