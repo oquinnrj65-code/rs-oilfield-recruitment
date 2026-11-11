@@ -7,6 +7,7 @@ const PgSession = require("connect-pg-simple")(session);
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const { z } = require("zod");
+const crypto = require("crypto");
 
 const required = ["DATABASE_URL", "SESSION_SECRET", "ADMIN_EMAIL", "ADMIN_PASSWORD", "SITE_ORIGIN"];
 for (const key of required) if (!process.env[key]) console.error("Missing required environment variable:", key);
@@ -17,7 +18,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process
 const origin = process.env.SITE_ORIGIN.replace(/\/$/, "");
 app.set("trust proxy", 1);
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
-app.use(cors({ origin, credentials: true, methods: ["GET","POST","PATCH","DELETE"], allowedHeaders: ["Content-Type"] }));
+app.use(cors({ origin, credentials: true, methods: ["GET","POST","PATCH","DELETE"], allowedHeaders: ["Content-Type","Authorization"] }));
 app.use(express.json({ limit: "32kb" }));
 app.use(session({
   store: new PgSession({ pool, tableName: "user_sessions", createTableIfMissing: true }),
@@ -47,7 +48,26 @@ const employerSchema = z.object({
   details:z.string().trim().max(3000).optional().default(""), consent:z.literal(true)
 });
 const asyncRoute = fn => (req,res,next) => Promise.resolve(fn(req,res,next)).catch(next);
-const requireAdmin = (req,res,next) => req.session && req.session.admin === true ? next() : res.status(401).json({error:"Sign in required"});
+function makeAdminToken(email) {
+  const payload = Buffer.from(JSON.stringify({ email, exp: Date.now() + 8 * 60 * 60 * 1000 })).toString("base64url");
+  const signature = crypto.createHmac("sha256", process.env.SESSION_SECRET).update(payload).digest("base64url");
+  return payload + "." + signature;
+}
+function requireAdmin(req,res,next) {
+  const token = (req.get("authorization") || "").replace(/^Bearer\\s+/i, "");
+  const parts = token.split(".");
+  if (parts.length !== 2) return res.status(401).json({error:"Sign in required"});
+  const expected = crypto.createHmac("sha256", process.env.SESSION_SECRET).update(parts[0]).digest();
+  let supplied;
+  try { supplied = Buffer.from(parts[1], "base64url"); } catch { return res.status(401).json({error:"Sign in required"}); }
+  if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected, supplied)) return res.status(401).json({error:"Sign in required"});
+  try {
+    const data = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8"));
+    if (!data.email || data.email !== process.env.ADMIN_EMAIL.toLowerCase() || !Number.isFinite(data.exp) || data.exp < Date.now()) return res.status(401).json({error:"Session expired. Please sign in again."});
+    req.adminEmail = data.email;
+    next();
+  } catch { return res.status(401).json({error:"Sign in required"}); }
+}
 
 app.get("/health", (req,res) => res.json({status:"ok", service:"R&S recruiting API"}));
 app.post("/api/applications", asyncRoute(async (req,res) => {
@@ -71,15 +91,10 @@ app.post("/api/admin/login", asyncRoute(async (req,res) => {
   const password = typeof req.body.password === "string" ? req.body.password : "";
   const valid = email === process.env.ADMIN_EMAIL.toLowerCase() && await bcrypt.compare(password, process.env.ADMIN_PASSWORD_HASH || await bcrypt.hash(process.env.ADMIN_PASSWORD, 12));
   if (!valid) return res.status(401).json({error:"Email or password is incorrect."});
-  req.session.regenerate(err => {
-    if (err) return res.status(500).json({error:"Unable to start secure session."});
-    req.session.admin = true;
-    req.session.adminEmail = email;
-    req.session.save(e => e ? res.status(500).json({error:"Unable to save session."}) : res.json({email}));
-  });
+  res.json({email, token:makeAdminToken(email)});
 }));
-app.post("/api/admin/logout", requireAdmin, (req,res) => req.session.destroy(() => res.json({ok:true})));
-app.get("/api/admin/me", requireAdmin, (req,res) => res.json({email:req.session.adminEmail}));
+app.post("/api/admin/logout", requireAdmin, (req,res) => res.json({ok:true}));
+app.get("/api/admin/me", requireAdmin, (req,res) => res.json({email:req.adminEmail}));
 app.get("/api/admin/overview", requireAdmin, asyncRoute(async (req,res) => {
   const [a,e] = await Promise.all([
     pool.query("SELECT id,full_name,email,phone,location,target_role,experience,certifications,status,created_at FROM candidate_applications ORDER BY created_at DESC LIMIT 200"),
