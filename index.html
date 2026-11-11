@@ -30,7 +30,8 @@ const employerTab=document.getElementById('employerTab'),candidateTab=document.g
 function setTab(candidate){employerForm.hidden=candidate;candidateForm.hidden=!candidate;employerTab.classList.toggle('active',!candidate);candidateTab.classList.toggle('active',candidate)}
 employerTab.addEventListener('click',()=>setTab(false));candidateTab.addEventListener('click',()=>setTab(true));
 function formData(form){const obj=Object.fromEntries(new FormData(form).entries());obj.consent=form.querySelector('[name=consent]').checked;return obj}
-async function submitForm(form,url,statusId){const status=document.getElementById(statusId);status.textContent='Submitting…';try{const res=await fetch('/api'+url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(formData(form))});const data=await res.json();if(!res.ok)throw new Error(data.error||'Submission failed');status.textContent=data.message;form.reset()}catch(e){status.textContent='Submission is not active yet. Please contact R&S directly once official contact details are published.'}}
+const API_BASE='https://rs-oilfield-api.onrender.com/api';
+async function submitForm(form,url,statusId){const status=document.getElementById(statusId);status.textContent='Submitting…';try{const res=await fetch(API_BASE+url,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify(formData(form))});const data=await res.json();if(!res.ok)throw new Error(data.error||'Submission failed');status.textContent=data.message;form.reset()}catch(e){status.textContent='Submission is not active yet. Please contact R&S directly once official contact details are published.'}}
 employerForm.addEventListener('submit',e=>{e.preventDefault();submitForm(employerForm,'/employer-inquiries','employerStatus')});
 candidateForm.addEventListener('submit',e=>{e.preventDefault();submitForm(candidateForm,'/applications','candidateStatus')});
 </script></body></html>
